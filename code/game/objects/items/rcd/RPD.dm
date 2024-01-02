@@ -218,6 +218,9 @@ GLOBAL_LIST_INIT(transit_tube_recipes, list(
 	var/mode = BUILD_MODE | DESTROY_MODE | WRENCH_MODE | REPROGRAM_MODE
 	/// Bitflags for upgrades
 	var/upgrade_flags
+	/// the player currently holding this device.
+	var/mob/listeningTo
+	var/turf/mousedrag_turf
 
 /datum/armor/item_pipe_dispenser
 	fire = 100
@@ -243,10 +246,33 @@ GLOBAL_LIST_INIT(transit_tube_recipes, list(
 	spark_system = null
 	return ..()
 
+/obj/item/pipe_dispenser/proc/on_mouse_drag(client/source, src_object, over_object, src_location, over_location, src_control, over_control, params)
+	SIGNAL_HANDLER
+	if(mousedrag_turf && mousedrag_turf == over_location)
+		return
+	if(!source.mob.Adjacent(over_location))
+		return
+	INVOKE_ASYNC(src, PROC_REF(do_pipe_build), over_object, source.mob, params)
+	mousedrag_turf = over_location
+
 /obj/item/pipe_dispenser/examine(mob/user)
 	. = ..()
 	. += span_notice("You can scroll your <b>mouse wheel</b> to change the piping layer.")
 	. += span_notice("You can <b>right click</b> a pipe to set the RPD to its color and layer.")
+
+/obj/item/pipe_dispenser/pickup(mob/to_hook)
+	. = ..()
+	if(listeningTo == to_hook)
+		return .
+	if(listeningTo)
+		UnregisterSignal(listeningTo.client, COMSIG_CLIENT_MOUSEDRAG)
+	RegisterSignal(to_hook.client, COMSIG_CLIENT_MOUSEDRAG, PROC_REF(on_mouse_drag))
+	listeningTo = to_hook
+
+/obj/item/pipe_dispenser/dropped(mob/wearer)
+	. = ..()
+	UnregisterSignal(wearer.client, COMSIG_CLIENT_MOUSEDRAG)
+	listeningTo = null
 
 /obj/item/pipe_dispenser/equipped(mob/user, slot, initial)
 	. = ..()
@@ -435,6 +461,9 @@ GLOBAL_LIST_INIT(transit_tube_recipes, list(
 		install_upgrade(atom_to_attack, user)
 		return TRUE
 
+	return do_rpd_actions(atom_to_attack, user, params = params)
+
+/obj/item/pipe_dispenser/proc/do_rpd_actions(atom/atom_to_attack, mob/user, params)
 	var/atom/attack_target = atom_to_attack
 
 	//So that changing the menu settings doesn't affect the pipes already being built.
@@ -533,11 +562,11 @@ GLOBAL_LIST_INIT(transit_tube_recipes, list(
 		switch(category) //if we've gotten this var, the target is valid
 			if(ATMOS_CATEGORY) //Making pipes
 				if(!do_pipe_build(attack_target, user, params))
-					return ..()
+					return FALSE
 
 			if(DISPOSALS_CATEGORY) //Making disposals pipes
 				if(!can_make_pipe)
-					return ..()
+					return FALSE
 				attack_target = get_turf(attack_target)
 				if(isclosedturf(attack_target))
 					balloon_alert(user, "target is blocked!")
@@ -561,7 +590,7 @@ GLOBAL_LIST_INIT(transit_tube_recipes, list(
 
 			if(TRANSIT_CATEGORY) //Making transit tubes
 				if(!can_make_pipe)
-					return ..()
+					return FALSE
 				attack_target = get_turf(attack_target)
 				if(isclosedturf(attack_target))
 					balloon_alert(user, "something in the way!")
@@ -594,7 +623,7 @@ GLOBAL_LIST_INIT(transit_tube_recipes, list(
 							tube.wrench_act(user, src)
 					return
 			else
-				return ..()
+				return FALSE
 
 /obj/item/pipe_dispenser/proc/check_can_make_pipe(atom/target_of_attack)
 	//make sure what we're clicking is valid for the current category
